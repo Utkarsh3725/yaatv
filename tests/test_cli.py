@@ -1933,7 +1933,7 @@ def test_failed_encode_without_output_creation_removes_nothing(
     assert "removed partial output" not in stderr.getvalue()
 
 
-def test_failed_encode_removes_replaced_output_when_overwrite_was_allowed(
+def test_failed_encode_preserves_existing_output_when_overwrite_was_allowed(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -1941,8 +1941,12 @@ def test_failed_encode_removes_replaced_output_when_overwrite_was_allowed(
     output_path.write_bytes(b"previous output")
     stderr = StringIO()
 
-    def encode(_command: list[str], *, verbose: bool = False) -> int:
-        output_path.write_bytes(b"partial")
+    encoded_paths: list[Path] = []
+
+    def encode(command: list[str], *, verbose: bool = False) -> int:
+        encoded_path = Path(command[-1])
+        encoded_paths.append(encoded_path)
+        encoded_path.write_bytes(b"partial")
         return 1
 
     monkeypatch.setattr("yaatv.cli.run_ffmpeg", encode)
@@ -1953,8 +1957,107 @@ def test_failed_encode_removes_replaced_output_when_overwrite_was_allowed(
         stderr=stderr,
     ) == 1
 
-    assert not output_path.exists()
-    assert f"warning: removed partial output from failed run: {output_path}" in stderr.getvalue()
+    assert output_path.read_bytes() == b"previous output"
+    assert len(encoded_paths) == 1
+    assert encoded_paths[0].parent == output_path.parent
+    assert encoded_paths[0].suffix == output_path.suffix
+    assert not encoded_paths[0].exists()
+
+
+def test_failed_verification_preserves_existing_output(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    audio_path, image_path, output_path = _mock_quick_encode_run(monkeypatch, tmp_path)
+    output_path.write_bytes(b"previous output")
+    encoded_paths: list[Path] = []
+
+    def encode(command: list[str], *, verbose: bool = False) -> int:
+        encoded_path = Path(command[-1])
+        encoded_paths.append(encoded_path)
+        encoded_path.write_bytes(b"replacement")
+        return 0
+
+    monkeypatch.setattr("yaatv.cli.run_ffmpeg", encode)
+    monkeypatch.setattr(
+        "yaatv.cli.probe_output",
+        lambda _ffprobe, _output_path: (_ for _ in ()).throw(YaatvError("Could not verify output")),
+    )
+
+    with pytest.raises(YaatvError, match="Could not verify output"):
+        run(
+            [str(audio_path), str(image_path), "-o", str(output_path), "--overwrite"],
+            stdin=StringIO(),
+            stderr=StringIO(),
+        )
+
+    assert output_path.read_bytes() == b"previous output"
+    assert len(encoded_paths) == 1
+    assert not encoded_paths[0].exists()
+
+
+def test_verified_overwrite_atomically_replaces_existing_output(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    audio_path, image_path, output_path = _mock_quick_encode_run(monkeypatch, tmp_path)
+    output_path.write_bytes(b"previous output")
+    encoded_paths: list[Path] = []
+
+    def encode(command: list[str], *, verbose: bool = False) -> int:
+        encoded_path = Path(command[-1])
+        encoded_paths.append(encoded_path)
+        encoded_path.write_bytes(b"replacement")
+        return 0
+
+    monkeypatch.setattr("yaatv.cli.run_ffmpeg", encode)
+    monkeypatch.setattr(
+        "yaatv.cli.probe_output",
+        lambda _ffprobe, _output_path: OutputStats(
+            width=1920,
+            height=1080,
+            video_codec="h264",
+            pixel_format="yuv420p",
+            color_range="tv",
+            color_space="bt709",
+            color_transfer="bt709",
+            color_primaries="bt709",
+            frame_rate=1.0,
+            audio_codec="aac",
+            audio_sample_rate=48_000,
+        ),
+    )
+
+    assert run(
+        [str(audio_path), str(image_path), "-o", str(output_path), "--overwrite"],
+        stdin=StringIO(),
+        stderr=StringIO(),
+    ) == 0
+
+    assert output_path.read_bytes() == b"replacement"
+    assert len(encoded_paths) == 1
+    assert not encoded_paths[0].exists()
+
+
+def test_dry_run_with_overwrite_still_reports_final_output_path(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    audio_path, image_path, output_path = _mock_quick_encode_run(monkeypatch, tmp_path)
+    output_path.write_bytes(b"previous output")
+    stderr = StringIO()
+
+    monkeypatch.setattr("yaatv.cli.find_ffmpeg", lambda: "ffmpeg")
+
+    assert run(
+        [str(audio_path), str(image_path), "-o", str(output_path), "--overwrite", "--dry-run"],
+        stdin=StringIO(),
+        stderr=stderr,
+    ) == 0
+
+    assert str(output_path) in stderr.getvalue()
+    assert output_path.read_bytes() == b"previous output"
+    assert list(tmp_path.glob(".out.*.mp4")) == []
 
 
 def test_failed_encode_never_touches_preexisting_output_without_permission(
@@ -2039,6 +2142,7 @@ def test_run_uses_output_dir_and_overwrite_flag(
 
     def encode(command: list[str], *, verbose: bool = False) -> int:
         captured["command"] = command
+        Path(command[-1]).write_bytes(b"replacement")
         return 0
 
     monkeypatch.setattr("yaatv.cli.run_ffmpeg", encode)
@@ -2066,7 +2170,10 @@ def test_run_uses_output_dir_and_overwrite_flag(
         stderr=stderr,
     ) == 0
     assert captured["command"][1] == "-y"
-    assert str(output_path) in captured["command"]
+    encoded_path = Path(captured["command"][-1])
+    assert encoded_path.parent == output_dir
+    assert encoded_path.suffix == output_path.suffix
+    assert output_path.read_bytes() == b"replacement"
 
 
 @pytest.mark.parametrize("no_warn", [False, True])

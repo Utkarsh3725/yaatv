@@ -1672,6 +1672,25 @@ def confirm_overwrite(path: Path, stdin: TextIO, stderr: TextIO, *, overwrite: b
     raise YaatvError("Aborted; output file was not overwritten.")
 
 
+def _staging_output_path(output_path: Path) -> Path:
+    """Reserve a same-directory path with the final container suffix."""
+    descriptor, name = tempfile.mkstemp(
+        prefix=f".{output_path.stem}.",
+        suffix=output_path.suffix,
+        dir=output_path.parent,
+    )
+    os.close(descriptor)
+    return Path(name)
+
+
+def _discard_staged_output(output_path: Path, stderr: TextIO) -> None:
+    """Remove an uncommitted staging file without hiding the primary error."""
+    try:
+        output_path.unlink(missing_ok=True)
+    except OSError as exc:
+        print(f"warning: could not remove temporary output {output_path}: {exc}", file=stderr)
+
+
 def _discard_failed_output(
     output_path: Path,
     *,
@@ -2085,11 +2104,17 @@ def run(
         if is_prores:
             print("note: .mov output uses ProRes 422; file sizes will be very large", file=stderr)
 
+        output_existed_before = output_path.exists()
+        encode_output_path = output_path
+        if not args.dry_run and output_existed_before and overwrite:
+            encode_output_path = _staging_output_path(output_path)
+            stack.callback(_discard_staged_output, encode_output_path, stderr)
+
         command = build_ffmpeg_command(
             ffmpeg=ffmpeg,
             audio_path=audio_path,
             image_path=image_path,
-            output_path=output_path,
+            output_path=encode_output_path,
             target_size=target_size,
             audio_plan=audio_plan,
             overwrite=overwrite,
@@ -2103,7 +2128,6 @@ def run(
             print(quote_command(command), file=stderr)
             return 0
 
-        output_existed_before = output_path.exists()
         try:
             print("Encoding...", file=stderr)
             exit_code = run_ffmpeg(command, verbose=args.verbose)
@@ -2114,8 +2138,8 @@ def run(
                         file=stderr,
                     )
                 _discard_failed_output(
-                    output_path,
-                    existed_before=output_existed_before,
+                    encode_output_path,
+                    existed_before=output_existed_before and encode_output_path == output_path,
                     replace_allowed=overwrite,
                     stderr=stderr,
                 )
@@ -2124,12 +2148,17 @@ def run(
             if ffprobe is None:
                 raise YaatvError("FFprobe was not resolved.")
             print("Verifying...", file=stderr)
-            stats = probe_output(ffprobe, output_path)
+            stats = probe_output(ffprobe, encode_output_path)
             verify_output_stats(stats, target_size, is_prores=is_prores)
+            if encode_output_path != output_path:
+                try:
+                    os.replace(encode_output_path, output_path)
+                except OSError as exc:
+                    raise YaatvError(f"Could not replace output file: {output_path}: {exc}") from exc
         except YaatvError:
             _discard_failed_output(
-                output_path,
-                existed_before=output_existed_before,
+                encode_output_path,
+                existed_before=output_existed_before and encode_output_path == output_path,
                 replace_allowed=overwrite,
                 stderr=stderr,
             )
