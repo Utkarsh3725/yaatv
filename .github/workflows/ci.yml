@@ -62,6 +62,8 @@ jobs:
         run: |
           yaatv --version
           python -m yaatv --version
+          yaatv --help
+          python -m yaatv --help
 
       - name: Run quality gates
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
