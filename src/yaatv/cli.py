@@ -443,21 +443,27 @@ def find_external_tool(
     app_bin_dir: Path | None = None,
     packaged_paths: Sequence[Path] | None = None,
 ) -> str:
-    app_paths = app_managed_tool_paths(name, app_bin_dir=app_bin_dir)
-    for candidate in app_paths:
-        if candidate.is_file():
-            return str(candidate)
-
+    candidates = [
+        str(candidate)
+        for candidate in app_managed_tool_paths(name, app_bin_dir=app_bin_dir)
+        if candidate.is_file()
+    ]
     package_paths = bundled_tool_paths(name) if packaged_paths is None else tuple(packaged_paths)
-    for candidate in package_paths:
-        if candidate.is_file():
-            return str(candidate)
-
+    candidates.extend(str(candidate) for candidate in package_paths if candidate.is_file())
     tool = shutil.which(name)
     if tool:
-        return tool
+        candidates.append(tool)
+
+    for candidate in dict.fromkeys(candidates):
+        if check_tool_health(candidate).state == "ok":
+            return candidate
 
     app_install_supported = app_bin_dir is not None or supports_app_managed_ffmpeg_install()
+    if candidates:
+        raise YaatvError(
+            f"{label} was found but could not run. Run yaatv --scry for details, "
+            f"or reinstall FFmpeg from {FFMPEG_DOWNLOAD_PAGE}."
+        )
     raise YaatvError(missing_tool_message(name, label, app_install_supported=app_install_supported))
 
 

@@ -1164,8 +1164,72 @@ def test_find_ffmpeg_uses_app_cache_before_path(
     path_tool.parent.mkdir()
     path_tool.write_bytes(b"")
     monkeypatch.setattr("shutil.which", lambda _: str(path_tool))
+    monkeypatch.setattr(
+        "yaatv.cli.check_tool_health",
+        lambda path: ToolHealth(path=path, state="ok"),
+    )
 
     assert find_external_tool("ffmpeg", "FFmpeg", app_bin_dir=app_bin, packaged_paths=()) == str(cached)
+
+
+def test_find_ffmpeg_skips_unhealthy_app_tool_for_healthy_path(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    app_bin = tmp_path / "app" / "bin"
+    app_bin.mkdir(parents=True)
+    cached = app_bin / _executable_name("ffmpeg")
+    cached.write_bytes(b"")
+    path_tool = tmp_path / "path" / _executable_name("ffmpeg")
+    path_tool.parent.mkdir()
+    path_tool.write_bytes(b"")
+    monkeypatch.setattr("shutil.which", lambda _: str(path_tool))
+    monkeypatch.setattr(
+        "yaatv.cli.check_tool_health",
+        lambda path: ToolHealth(path=path, state="blocked" if path == str(cached) else "ok"),
+    )
+
+    assert find_external_tool("ffmpeg", "FFmpeg", app_bin_dir=app_bin, packaged_paths=()) == str(path_tool)
+
+
+def test_find_ffmpeg_skips_unhealthy_bundled_tool_for_healthy_path(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    bundled = tmp_path / "bundle" / _executable_name("ffmpeg")
+    bundled.parent.mkdir()
+    bundled.write_bytes(b"")
+    path_tool = tmp_path / "path" / _executable_name("ffmpeg")
+    path_tool.parent.mkdir()
+    path_tool.write_bytes(b"")
+    monkeypatch.setattr("shutil.which", lambda _: str(path_tool))
+    monkeypatch.setattr(
+        "yaatv.cli.check_tool_health",
+        lambda path: ToolHealth(path=path, state="failed" if path == str(bundled) else "ok"),
+    )
+
+    assert find_external_tool(
+        "ffmpeg",
+        "FFmpeg",
+        app_bin_dir=tmp_path / "empty",
+        packaged_paths=(bundled,),
+    ) == str(path_tool)
+
+
+def test_find_ffmpeg_reports_when_every_candidate_is_unhealthy(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    path_tool = tmp_path / _executable_name("ffmpeg")
+    path_tool.write_bytes(b"")
+    monkeypatch.setattr("shutil.which", lambda _: str(path_tool))
+    monkeypatch.setattr(
+        "yaatv.cli.check_tool_health",
+        lambda path: ToolHealth(path=path, state="failed"),
+    )
+
+    with pytest.raises(YaatvError, match="found but could not run.*--scry"):
+        find_external_tool("ffmpeg", "FFmpeg", app_bin_dir=tmp_path / "empty", packaged_paths=())
 
 
 def test_find_ffmpeg_missing_reports_install_command(
@@ -1393,6 +1457,10 @@ def test_resolve_ffmpeg_tools_interactive_installs_when_confirmed(
         return app_bin
 
     monkeypatch.setattr("shutil.which", lambda _: None)
+    monkeypatch.setattr(
+        "yaatv.cli.check_tool_health",
+        lambda path: ToolHealth(path=path, state="ok"),
+    )
 
     assert resolve_ffmpeg_tools(
         stdin=_TtyInput("y\n"),
@@ -2648,6 +2716,10 @@ def test_find_ffprobe_uses_adjacent_bin_for_frozen_onedir(
     monkeypatch.setattr(sys, "frozen", True, raising=False)
     monkeypatch.setattr(sys, "executable", str(tmp_path / _executable_name("yaatv")))
     monkeypatch.setattr("shutil.which", lambda _: None)
+    monkeypatch.setattr(
+        "yaatv.cli.check_tool_health",
+        lambda path: ToolHealth(path=path, state="ok"),
+    )
 
     assert find_external_tool("ffprobe", "FFprobe", app_bin_dir=tmp_path / "empty") == str(bundled)
 
