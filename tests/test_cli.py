@@ -228,6 +228,17 @@ def test_ci_workflow_includes_cross_platform_matrix() -> None:
     assert "matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'" in workflow
 
 
+def test_ci_workflow_smoke_tests_cli_help_entrypoints() -> None:
+    workflow = (Path(__file__).resolve().parents[1] / ".github" / "workflows" / "ci.yml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "yaatv --version" in workflow
+    assert "python -m yaatv --version" in workflow
+    assert "yaatv --help" in workflow
+    assert "python -m yaatv --help" in workflow
+
+
 def test_windows_installer_uses_pinned_versioned_release_archive() -> None:
     assert WINDOWS_FFMPEG_ARCHIVE_URL == (
         "https://github.com/GyanD/codexffmpeg/releases/download/8.1.2/ffmpeg-8.1.2-essentials_build.zip"
