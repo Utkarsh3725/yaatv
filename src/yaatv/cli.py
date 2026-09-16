@@ -2180,10 +2180,12 @@ def run(
 
 
 def _uses_drag_drop_arguments(argv: Sequence[str]) -> bool:
+    """Return True when argv contains exactly two positional file arguments."""
     return len(argv) == 2 and all(not arg.startswith("-") for arg in argv)
 
 
 def _windows_parent_process_name() -> str | None:
+    """Return the lowercase executable name of the parent process on Windows."""
     if os.name != "nt":
         return None
 
@@ -2250,21 +2252,20 @@ def _windows_parent_process_name() -> str | None:
     return None
 
 
-def _should_pause_after_run(argv: Sequence[str], stdin: TextIO) -> bool:
+def _should_pause_after_run(argv: Sequence[str], stdin: TextIO | None = None) -> bool:
+    """Return True if argv represents drag-and-drop files launched from Windows Explorer."""
     if not _uses_drag_drop_arguments(argv):
         return False
-
-    if not stdin.isatty():
-        return True
 
     return _windows_parent_process_name() == "explorer.exe"
 
 
 def _pause_before_exit(stdin: TextIO, stderr: TextIO) -> None:
+    """Prompt user to press enter before console window closes, ignoring interrupt/EOF."""
     try:
         print("\nPress Enter to exit...", file=stderr, flush=True)
         stdin.readline()
-    except (EOFError, KeyboardInterrupt):
+    except (EOFError, KeyboardInterrupt, ValueError):
         pass
 
 
