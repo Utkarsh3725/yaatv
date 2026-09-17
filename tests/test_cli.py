@@ -2987,8 +2987,25 @@ def test_normalize_output_path_rejects_file_parent(tmp_path: Path) -> None:
 def test_run_ffmpeg_hides_progress_unless_verbose(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: dict[str, object] = {}
 
-    def fake_run(command: list[str], *, check: bool, stderr: object, text: bool) -> object:
-        captured.update({"command": command, "check": check, "stderr": stderr, "text": text})
+    def fake_run(
+        command: list[str],
+        *,
+        check: bool,
+        stderr: object,
+        text: bool,
+        encoding: str | None = None,
+        errors: str | None = None,
+    ) -> object:
+        captured.update(
+            {
+                "command": command,
+                "check": check,
+                "stderr": stderr,
+                "text": text,
+                "encoding": encoding,
+                "errors": errors,
+            }
+        )
         return subprocess.CompletedProcess(command, 0, stderr="")
 
     monkeypatch.setattr("subprocess.run", fake_run)
@@ -2999,6 +3016,8 @@ def test_run_ffmpeg_hides_progress_unless_verbose(monkeypatch: pytest.MonkeyPatc
         "check": False,
         "stderr": subprocess.PIPE,
         "text": True,
+        "encoding": "utf-8",
+        "errors": "replace",
     }
 
     assert run_ffmpeg(["ffmpeg", "-version"], verbose=True) == 0

@@ -52,6 +52,39 @@ def test_cli_encodes_valid_mp4_with_ffmpeg(tmp_path: Path) -> None:
     _assert_valid_output(ffmpeg, ffprobe, output_path, expected_size=(1920, 1080), max_duration=3)
 
 
+def test_cli_encodes_unicode_filenames_with_ffmpeg(tmp_path: Path) -> None:
+    ffmpeg, ffprobe = _require_ffmpeg_tools()
+
+    audio_path = tmp_path / "café-déjà-vu-夢.wav"
+    image_path = tmp_path / "cover_꿈속에서.png"
+    output_path = tmp_path / "output_夢みたい.mp4"
+
+    _write_sine_wave(audio_path)
+    Image.new("RGB", (320, 240), (128, 84, 24)).save(image_path, "PNG")
+
+    stderr = StringIO()
+    exit_code = run(
+        [
+            "--audio",
+            str(audio_path),
+            "--image",
+            str(image_path),
+            "--output",
+            str(output_path),
+            "--no-warn",
+        ],
+        stdin=StringIO(),
+        stderr=stderr,
+    )
+
+    assert exit_code == 0
+    assert output_path.exists()
+    assert f"Created {output_path}" in stderr.getvalue()
+    assert "Verified: 1920x1080" in stderr.getvalue()
+
+    _assert_valid_output(ffmpeg, ffprobe, output_path, expected_size=(1920, 1080), max_duration=3)
+
+
 def test_cli_encodes_square_mp4_with_ffmpeg(tmp_path: Path) -> None:
     ffmpeg, ffprobe = _require_ffmpeg_tools()
 
@@ -268,6 +301,8 @@ def _output_duration(ffprobe: str, output_path: Path) -> float:
         check=True,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
     )
     return float(duration.stdout.strip())
 
@@ -302,6 +337,8 @@ def _assert_valid_output(
         check=False,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
     )
     assert verification.returncode == 0, verification.stderr
 
