@@ -14,6 +14,8 @@ from PIL import Image
 from yaatv import __version__
 from yaatv.cli import (
     FFMPEG_DOWNLOAD_USER_AGENT,
+    KNOWN_AUDIO_EXTENSIONS,
+    KNOWN_IMAGE_EXTENSIONS,
     LINUX_FFMPEG_ARCHIVE_SHA256,
     LINUX_FFMPEG_ARCHIVE_URL,
     LINUX_FFPROBE_ARCHIVE_SHA256,
@@ -26,6 +28,7 @@ from yaatv.cli import (
     MACOS_FFPROBE_ARCHIVE_URL,
     MAX_FILENAME_LENGTH,
     OUTPUT_SIZES,
+    SUPPORTED_OUTPUT_EXTENSIONS,
     TOOL_HEALTH_TIMEOUT_SECONDS,
     WINDOWS_FFMPEG_ARCHIVE_SHA256,
     WINDOWS_FFMPEG_ARCHIVE_URL,
@@ -112,6 +115,21 @@ def _video_tail(pixel_format: str) -> str:
         f"format={pixel_format},"
         "setparams=range=tv:color_primaries=bt709:color_trc=bt709:colorspace=bt709"
     )
+
+
+def test_readme_supported_input_formats_match_code_constants() -> None:
+    readme = Path("README.md").read_text(encoding="utf-8")
+
+    assert _readme_format_extensions(readme, "Audio") == KNOWN_AUDIO_EXTENSIONS
+    assert _readme_format_extensions(readme, "Images") == KNOWN_IMAGE_EXTENSIONS
+    assert _readme_format_extensions(readme, "Output") == SUPPORTED_OUTPUT_EXTENSIONS
+
+
+def _readme_format_extensions(readme: str, input_type: str) -> set[str]:
+    pattern = rf"^\| {re.escape(input_type)} \| (?P<extensions>.+) \|$"
+    match = re.search(pattern, readme, re.MULTILINE)
+    assert match is not None, f"Missing supported formats row for {input_type}"
+    return set(re.findall(r"`(\.[^`]+)`", match.group("extensions")))
 
 
 def _pad_filter(width: int, height: int, *, color: str = "black", pixel_format: str = "yuv420p") -> str:

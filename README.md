@@ -149,6 +149,14 @@ yaatv -a track.flac -i cover.jpg --pad 2
 - Warnings appear when source audio, image size, or file extensions may be
   less than ideal.
 
+## Supported input formats
+
+| Input type | Supported extensions |
+| --- | --- |
+| Audio | `.aac`, `.aiff`, `.alac`, `.flac`, `.m4a`, `.mp3`, `.ogg`, `.opus`, `.wav`, `.wma` |
+| Images | `.bmp`, `.jpeg`, `.jpg`, `.png`, `.tif`, `.tiff`, `.webp` |
+| Output | `.mov`, `.mp4` |
+
 ## Options
 
 | Option | Purpose |
