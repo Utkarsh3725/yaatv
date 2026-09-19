@@ -701,6 +701,8 @@ def check_tool_health(path: str | None) -> ToolHealth:
             check=False,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=TOOL_HEALTH_TIMEOUT_SECONDS,
         )  # nosec B603
     except FileNotFoundError:
@@ -1802,6 +1804,8 @@ def run_ffmpeg(command: Sequence[str], *, verbose: bool = False) -> FFmpegResult
             check=False,
             stderr=None if verbose else subprocess.PIPE,
             text=True,
+            encoding="utf-8",
+            errors="replace",
         )  # nosec B603
     except FileNotFoundError as exc:
         raise YaatvError(
@@ -1830,6 +1834,8 @@ def probe_output(ffprobe: str, output_path: Path) -> OutputStats:
             check=False,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
         )  # nosec B603
     except FileNotFoundError as exc:
         raise YaatvError(
