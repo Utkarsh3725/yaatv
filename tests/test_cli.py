@@ -16,6 +16,7 @@ from yaatv.cli import (
     FFMPEG_DOWNLOAD_USER_AGENT,
     KNOWN_AUDIO_EXTENSIONS,
     KNOWN_IMAGE_EXTENSIONS,
+    FFMPEG_ERROR_TAIL_LINES,
     LINUX_FFMPEG_ARCHIVE_SHA256,
     LINUX_FFMPEG_ARCHIVE_URL,
     LINUX_FFPROBE_ARCHIVE_SHA256,
@@ -34,6 +35,7 @@ from yaatv.cli import (
     WINDOWS_FFMPEG_ARCHIVE_URL,
     AudioMetadata,
     AudioPlan,
+    FFmpegResult,
     OutputStats,
     ToolHealth,
     YaatvError,
@@ -2003,6 +2005,30 @@ def test_failed_encode_removes_newly_created_partial_output(
     assert f"warning: removed partial output from failed run: {output_path}" in output
 
 
+def test_failed_encode_shows_ffmpeg_error_tail(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    audio_path, image_path, output_path = _mock_quick_encode_run(monkeypatch, tmp_path)
+    stderr = StringIO()
+
+    def encode(_command: list[str], *, verbose: bool = False) -> FFmpegResult:
+        output_path.write_bytes(b"partial")
+        return FFmpegResult(1, "Invalid data found when processing input")
+
+    monkeypatch.setattr("yaatv.cli.run_ffmpeg", encode)
+
+    assert run(
+        [str(audio_path), str(image_path), "-o", str(output_path), "--overwrite"],
+        stdin=StringIO(),
+        stderr=stderr,
+    ) == 1
+
+    output = stderr.getvalue()
+    assert "Last FFmpeg output:" in output
+    assert "Invalid data found when processing input" in output
+
+
 def test_failed_verification_removes_newly_created_output(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -2963,7 +2989,7 @@ def test_run_ffmpeg_hides_progress_unless_verbose(monkeypatch: pytest.MonkeyPatc
 
     def fake_run(command: list[str], *, check: bool, stderr: object, text: bool) -> object:
         captured.update({"command": command, "check": check, "stderr": stderr, "text": text})
-        return subprocess.CompletedProcess(command, 0)
+        return subprocess.CompletedProcess(command, 0, stderr="")
 
     monkeypatch.setattr("subprocess.run", fake_run)
 
@@ -2977,6 +3003,20 @@ def test_run_ffmpeg_hides_progress_unless_verbose(monkeypatch: pytest.MonkeyPatc
 
     assert run_ffmpeg(["ffmpeg", "-version"], verbose=True) == 0
     assert captured["stderr"] is None
+
+
+def test_run_ffmpeg_keeps_bounded_error_tail(monkeypatch: pytest.MonkeyPatch) -> None:
+    ffmpeg_lines = [f"line {index}" for index in range(FFMPEG_ERROR_TAIL_LINES + 3)]
+
+    def fake_run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(command, 1, stderr="\n".join(ffmpeg_lines))
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    result = run_ffmpeg(["ffmpeg", "-version"])
+
+    assert result == 1
+    assert result.stderr_tail == "\n".join(ffmpeg_lines[-FFMPEG_ERROR_TAIL_LINES:])
 
 
 def test_run_ffmpeg_reports_missing_ffmpeg(monkeypatch: pytest.MonkeyPatch) -> None:
