@@ -93,6 +93,7 @@ WINDOWS_RESERVED_FILENAMES = {
 MAX_FILENAME_LENGTH = 200
 FFMPEG_DOWNLOAD_PAGE = "https://ffmpeg.org/download.html"
 FFMPEG_DOWNLOAD_TIMEOUT_SECONDS = 60
+FFMPEG_ERROR_TAIL_LINES = 20
 TOOL_HEALTH_TIMEOUT_SECONDS = 5
 FFMPEG_DOWNLOAD_USER_AGENT = f"yaatv/{__version__}"
 WINDOWS_FFMPEG_ARCHIVE_URL = (
@@ -129,6 +130,23 @@ UNIX_FFMPEG_TOOLS = ("ffmpeg", "ffprobe")
 
 class YaatvError(Exception):
     """An expected user-facing failure."""
+
+
+@dataclass(frozen=True)
+class FFmpegResult:
+    returncode: int
+    stderr_tail: str = ""
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, int):
+            return self.returncode == other
+        return super().__eq__(other)
+
+    def __int__(self) -> int:
+        return self.returncode
+
+    def __str__(self) -> str:
+        return str(self.returncode)
 
 
 @dataclass(frozen=True)
@@ -1122,7 +1140,7 @@ def _embedded_cover_candidates(audio: object) -> Iterable[tuple[bytes, str | Non
         return
 
     for value in _tag_values(tags, ("covr", "\xa9covr")):
-        if isinstance(value, (bytes, bytearray)):
+        if isinstance(value, bytes | bytearray):
             yield bytes(value), None
 
     values = tags.values() if hasattr(tags, "values") else ()
@@ -1137,7 +1155,7 @@ def _tag_values(tags: object, keys: Iterable[str]) -> Iterable[object]:
         value = _get_tag(tags, key)
         if value is None:
             continue
-        if isinstance(value, (list, tuple)):
+        if isinstance(value, list | tuple):
             yield from value
         else:
             yield value
@@ -1240,7 +1258,7 @@ def _normalize_tag(value: object) -> str | None:
     if text is not None:
         value = text
 
-    if isinstance(value, (list, tuple)):
+    if isinstance(value, list | tuple):
         value = value[0] if value else None
 
     if isinstance(value, bytes):
@@ -1770,7 +1788,14 @@ def quote_command(command: Sequence[str]) -> str:
     return shlex.join(parts)
 
 
-def run_ffmpeg(command: Sequence[str], *, verbose: bool = False) -> int:
+def _tail_output(output: str | None, *, max_lines: int = FFMPEG_ERROR_TAIL_LINES) -> str:
+    if not output:
+        return ""
+    lines = output.strip().splitlines()
+    return "\n".join(lines[-max_lines:])
+
+
+def run_ffmpeg(command: Sequence[str], *, verbose: bool = False) -> FFmpegResult:
     try:
         completed = subprocess.run(
             command,
@@ -1785,7 +1810,7 @@ def run_ffmpeg(command: Sequence[str], *, verbose: bool = False) -> int:
         ) from exc
     except OSError as exc:
         raise YaatvError(f"Could not run FFmpeg: {exc}") from exc
-    return completed.returncode
+    return FFmpegResult(completed.returncode, _tail_output(completed.stderr))
 
 
 def probe_output(ffprobe: str, output_path: Path) -> OutputStats:
@@ -2140,13 +2165,17 @@ def run(
 
         try:
             print("Encoding...", file=stderr)
-            exit_code = run_ffmpeg(command, verbose=args.verbose)
+            ffmpeg_result = run_ffmpeg(command, verbose=args.verbose)
+            exit_code = int(ffmpeg_result)
             if exit_code != 0:
                 if not args.verbose:
+                    details = getattr(ffmpeg_result, "stderr_tail", "")
                     print(
                         f"error: FFmpeg failed with exit code {exit_code}. Rerun with --verbose to show FFmpeg output.",
                         file=stderr,
                     )
+                    if details:
+                        print(f"Last FFmpeg output:\n{details}", file=stderr)
                 _discard_failed_output(
                     encode_output_path,
                     existed_before=output_existed_before and encode_output_path == output_path,
