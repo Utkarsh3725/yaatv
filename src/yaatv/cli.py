@@ -167,6 +167,16 @@ class AudioPlan:
 
 
 @dataclass(frozen=True)
+class OutputProfile:
+    name: str
+    pixel_format: str
+    video_codec_args: tuple[str, ...]
+    faststart_args: tuple[str, ...] = ()
+    output_format_args: tuple[str, ...] = ()
+    large_file_note: str | None = None
+
+
+@dataclass(frozen=True)
 class OutputStats:
     width: int | None
     height: int | None
@@ -1394,14 +1404,61 @@ def input_format_warnings(audio_path: Path, image_path: Path | None, bg_image_pa
 # Building structured command arguments and video/audio filtergraphs.
 # ---------------------------------------------------------------------------
 
+MP4_OUTPUT_PROFILE = OutputProfile(
+    name="mp4",
+    pixel_format="yuv420p",
+    video_codec_args=(
+        "-c:v",
+        "libx264",
+        "-preset",
+        "slow",
+        "-crf",
+        "16",
+        "-pix_fmt",
+        "yuv420p",
+    ),
+    faststart_args=("-movflags", "+faststart"),
+)
 
-def _video_format(is_prores: bool) -> str:
-    return "yuv422p10le" if is_prores else "yuv420p"
+
+PRORES_MOV_OUTPUT_PROFILE = OutputProfile(
+    name="prores-mov",
+    pixel_format="yuv422p10le",
+    video_codec_args=(
+        "-c:v",
+        "prores_ks",
+        "-profile:v",
+        "2",
+        "-pix_fmt",
+        "yuv422p10le",
+        "-vendor",
+        "apl0",
+    ),
+    output_format_args=("-f", "mov"),
+    large_file_note=".mov output uses ProRes 422; file sizes will be very large",
+)
+
+OUTPUT_PROFILES = {
+    ".mp4": MP4_OUTPUT_PROFILE,
+    ".mov": PRORES_MOV_OUTPUT_PROFILE,
+}
 
 
-def _video_tail(is_prores: bool) -> str:
+def output_profile_for_path(output_path: Path) -> OutputProfile:
+    try:
+        return OUTPUT_PROFILES[output_path.suffix.lower()]
+    except KeyError as exc:
+        supported = ", ".join(sorted(OUTPUT_PROFILES))
+        raise YaatvError(f"Unsupported output extension '{output_path.suffix}'. Use one of: {supported}") from exc
+
+
+def _output_profile(is_prores: bool) -> OutputProfile:
+    return PRORES_MOV_OUTPUT_PROFILE if is_prores else MP4_OUTPUT_PROFILE
+
+
+def _video_tail(output_profile: OutputProfile) -> str:
     return (
-        f"format={_video_format(is_prores)},"
+        f"format={output_profile.pixel_format},"
         "setparams=range=tv:color_primaries=bt709:color_trc=bt709:colorspace=bt709"
     )
 
@@ -1418,30 +1475,6 @@ def _color_source_scale(width: int, height: int) -> str:
     )
 
 
-def _video_codec_args(is_prores: bool) -> tuple[str, ...]:
-    if is_prores:
-        return (
-            "-c:v",
-            "prores_ks",
-            "-profile:v",
-            "2",
-            "-pix_fmt",
-            "yuv422p10le",
-            "-vendor",
-            "apl0",
-        )
-    return (
-        "-c:v",
-        "libx264",
-        "-preset",
-        "slow",
-        "-crf",
-        "16",
-        "-pix_fmt",
-        "yuv420p",
-    )
-
-
 def _color_metadata_args() -> tuple[str, ...]:
     return (
         "-color_range",
@@ -1455,21 +1488,13 @@ def _color_metadata_args() -> tuple[str, ...]:
     )
 
 
-def _faststart_args(is_prores: bool) -> tuple[str, ...]:
-    return () if is_prores else ("-movflags", "+faststart")
-
-
-def _output_format_args(is_prores: bool) -> tuple[str, ...]:
-    return ("-f", "mov") if is_prores else ()
-
-
 def _duration_args(output_duration: float | None) -> tuple[str, ...]:
     return ("-t", format_seconds(output_duration)) if output_duration is not None else ()
 
 
-def _encode_args(audio_plan: AudioPlan, is_prores: bool) -> tuple[str, ...]:
+def _encode_args(audio_plan: AudioPlan, output_profile: OutputProfile) -> tuple[str, ...]:
     return (
-        *_video_codec_args(is_prores),
+        *output_profile.video_codec_args,
         *_color_metadata_args(),
         *audio_plan.codec_args,
         *audio_plan.filter_args,
@@ -1478,16 +1503,16 @@ def _encode_args(audio_plan: AudioPlan, is_prores: bool) -> tuple[str, ...]:
 
 def _finish_output_args(
     output_duration: float | None,
-    is_prores: bool,
+    output_profile: OutputProfile,
     output_path: Path,
     *,
     include_shortest: bool,
 ) -> tuple[str, ...]:
     return (
         *(("-shortest",) if include_shortest else ()),
-        *_faststart_args(is_prores),
+        *output_profile.faststart_args,
         *_duration_args(output_duration),
-        *_output_format_args(is_prores),
+        *output_profile.output_format_args,
         str(output_path),
     )
 
@@ -1495,18 +1520,18 @@ def _finish_output_args(
 def _filter_output_args(
     video_filter: str,
     output_duration: float | None,
-    is_prores: bool,
+    output_profile: OutputProfile,
     output_path: Path,
     *,
     include_shortest: bool,
 ) -> tuple[str, ...]:
     return (
         *(("-shortest",) if include_shortest else ()),
-        *_faststart_args(is_prores),
+        *output_profile.faststart_args,
         "-vf",
         video_filter,
         *_duration_args(output_duration),
-        *_output_format_args(is_prores),
+        *output_profile.output_format_args,
         str(output_path),
     )
 
@@ -1526,7 +1551,8 @@ def build_ffmpeg_command(
     bg_blur: bool = False,
 ) -> list[str]:
     width, height = target_size
-    video_tail = _video_tail(is_prores)
+    output_profile = _output_profile(is_prores)
+    video_tail = _video_tail(output_profile)
 
     if image_path is None:
         color_source = f"color=c={bg_color}:s={width}x{height}"
@@ -1545,11 +1571,11 @@ def build_ffmpeg_command(
             "1:v:0",
             "-map",
             "0:a:0",
-            *_encode_args(audio_plan, is_prores),
+            *_encode_args(audio_plan, output_profile),
             *_filter_output_args(
                 f"fps=fps=1:start_time=0,{_color_source_scale(width, height)},{video_tail}",
                 output_duration,
-                is_prores,
+                output_profile,
                 output_path,
                 include_shortest=output_duration is None,
             ),
@@ -1585,10 +1611,10 @@ def build_ffmpeg_command(
             "[v]",
             "-map",
             "2:a:0",
-            *_encode_args(audio_plan, is_prores),
+            *_encode_args(audio_plan, output_profile),
             *_finish_output_args(
                 output_duration,
-                is_prores,
+                output_profile,
                 output_path,
                 include_shortest=output_duration is None,
             ),
@@ -1619,43 +1645,12 @@ def build_ffmpeg_command(
             "[v]",
             "-map",
             "1:a:0",
-            *_encode_args(audio_plan, is_prores),
+            *_encode_args(audio_plan, output_profile),
             *_finish_output_args(
                 output_duration,
-                is_prores,
+                output_profile,
                 output_path,
                 include_shortest=output_duration is None,
-            ),
-        ]
-
-    if is_prores:
-        video_filter = (
-            f"{_video_scale(width, height, aspect='decrease')},"
-            f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:{bg_color},"
-            f"{video_tail}"
-        )
-        return [
-            ffmpeg,
-            "-y" if overwrite else "-n",
-            "-loop",
-            "1",
-            "-framerate",
-            "1",
-            "-i",
-            str(image_path),
-            "-i",
-            str(audio_path),
-            "-map",
-            "0:v:0",
-            "-map",
-            "1:a:0",
-            *_encode_args(audio_plan, is_prores),
-            *_filter_output_args(
-                video_filter,
-                output_duration,
-                is_prores,
-                output_path,
-                include_shortest=True,
             ),
         ]
 
@@ -1680,11 +1675,11 @@ def build_ffmpeg_command(
         "0:v:0",
         "-map",
         "1:a:0",
-        *_encode_args(audio_plan, is_prores),
+        *_encode_args(audio_plan, output_profile),
         *_filter_output_args(
             video_filter,
             output_duration,
-            is_prores,
+            output_profile,
             output_path,
             include_shortest=True,
         ),
@@ -2145,7 +2140,8 @@ def run(
         audio_plan = choose_audio_plan(metadata, args.pad)
         output_duration = metadata.duration + args.pad if metadata.duration is not None else None
 
-        is_prores = output_path.suffix.lower() == ".mov"
+        output_profile = output_profile_for_path(output_path)
+        is_prores = output_profile is PRORES_MOV_OUTPUT_PROFILE
 
         if not args.no_warn:
             warnings = input_format_warnings(audio_path, image_path, bg_image_path)
@@ -2154,8 +2150,8 @@ def run(
                 *warnings,
             ]:
                 print(f"warning: {warning}", file=stderr)
-        if is_prores:
-            print("note: .mov output uses ProRes 422; file sizes will be very large", file=stderr)
+        if output_profile.large_file_note:
+            print(f"note: {output_profile.large_file_note}", file=stderr)
 
         output_existed_before = output_path.exists()
         encode_output_path = output_path

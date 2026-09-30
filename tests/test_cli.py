@@ -28,6 +28,7 @@ from yaatv.cli import (
     MACOS_FFPROBE_ARCHIVE_SHA256,
     MACOS_FFPROBE_ARCHIVE_URL,
     MAX_FILENAME_LENGTH,
+    OUTPUT_PROFILES,
     OUTPUT_SIZES,
     SUPPORTED_OUTPUT_EXTENSIONS,
     TOOL_HEALTH_TIMEOUT_SECONDS,
@@ -62,6 +63,7 @@ from yaatv.cli import (
     is_high_quality_aac,
     main,
     normalize_output_path,
+    output_profile_for_path,
     output_size,
     pad_seconds,
     parse_args,
@@ -659,6 +661,23 @@ def test_media_contract_defines_every_supported_output_size(
 
     assert output_size(resolution, aspect) == expected_size
     assert command[command.index("-vf") + 1] == _pad_filter(width, height)
+
+
+def test_output_profiles_define_supported_container_contracts() -> None:
+    assert set(OUTPUT_PROFILES) == {".mp4", ".mov"}
+
+    mp4_profile = output_profile_for_path(Path("upload.mp4"))
+    mov_profile = output_profile_for_path(Path("archive.mov"))
+
+    assert mp4_profile.video_codec_args[:2] == ("-c:v", "libx264")
+    assert mp4_profile.faststart_args == ("-movflags", "+faststart")
+    assert mp4_profile.output_format_args == ()
+    assert mp4_profile.pixel_format == "yuv420p"
+
+    assert mov_profile.video_codec_args[:2] == ("-c:v", "prores_ks")
+    assert mov_profile.faststart_args == ()
+    assert mov_profile.output_format_args == ("-f", "mov")
+    assert mov_profile.pixel_format == "yuv422p10le"
 
 
 @pytest.mark.parametrize(
