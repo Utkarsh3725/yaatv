@@ -1216,13 +1216,23 @@ def _embedded_cover_candidates(audio: object) -> Iterable[tuple[bytes, str | Non
 
 def _is_front_cover_picture(picture: object) -> bool:
     picture_type = getattr(picture, "type", None)
+    if picture_type is None:
+        return False
     try:
         return int(picture_type) == 3
     except (TypeError, ValueError):
         pass
 
-    normalized = str(picture_type).replace("_", " ").replace("-", " ").lower()
-    return normalized in {"front cover", "cover front"}
+    normalized = (
+        str(picture_type)
+        .replace("_", " ")
+        .replace("-", " ")
+        .replace("(", " ")
+        .replace(")", " ")
+        .lower()
+    )
+    words = set(normalized.split())
+    return {"front", "cover"}.issubset(words)
 
 
 def _tag_values(tags: object, keys: Iterable[str]) -> Iterable[object]:
