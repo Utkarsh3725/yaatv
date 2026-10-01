@@ -2987,6 +2987,33 @@ def test_extract_embedded_cover_skips_invalid_candidate(
     assert not (output_dir / "embedded-cover-1.jpg").exists()
 
 
+def test_extract_embedded_cover_prefers_front_cover_candidate(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    back_picture = type(
+        "FakePicture",
+        (),
+        {"data": _image_bytes("PNG"), "mime": "image/png", "type": 4},
+    )()
+    front_picture = type(
+        "FakePicture",
+        (),
+        {"data": _image_bytes(), "mime": "image/jpeg", "type": 3},
+    )()
+    audio = type("FakeAudio", (), {"pictures": [back_picture, front_picture], "tags": None})()
+    audio_path = tmp_path / "track.flac"
+    output_dir = tmp_path / "covers"
+    output_dir.mkdir()
+    monkeypatch.setattr("yaatv.cli.MutagenFile", lambda _path: audio)
+
+    cover_path = extract_embedded_cover(audio_path, output_dir)
+
+    assert cover_path == output_dir / "embedded-cover-1.jpg"
+    assert validate_image(cover_path) == (16, 16)
+    assert not (output_dir / "embedded-cover-2.png").exists()
+
+
 def test_extract_embedded_cover_rejects_all_invalid_candidates(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

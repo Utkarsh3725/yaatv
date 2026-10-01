@@ -1163,7 +1163,12 @@ def extract_embedded_cover(audio_path: Path, directory: Path) -> Path | None:
         return None
 
     last_validation_error: YaatvError | None = None
-    for index, (image_data, mime_type) in enumerate(_embedded_cover_candidates(audio), start=1):
+    candidates = sorted(
+        _embedded_cover_candidates(audio),
+        key=lambda candidate: 0 if candidate[2] else 1,
+    )
+
+    for index, (image_data, mime_type, _is_front_cover) in enumerate(candidates, start=1):
         suffix = _embedded_cover_suffix(mime_type, image_data)
         cover_path = directory / f"embedded-cover-{index}{suffix}"
         cover_path.write_bytes(image_data)
@@ -1180,11 +1185,15 @@ def extract_embedded_cover(audio_path: Path, directory: Path) -> Path | None:
     return None
 
 
-def _embedded_cover_candidates(audio: object) -> Iterable[tuple[bytes, str | None]]:
+def _embedded_cover_candidates(audio: object) -> Iterable[tuple[bytes, str | None, bool]]:
     for picture in getattr(audio, "pictures", ()) or ():
         image_data = getattr(picture, "data", None)
         if isinstance(image_data, bytes):
-            yield image_data, _string_or_none(getattr(picture, "mime", None))
+            yield (
+                image_data,
+                _string_or_none(getattr(picture, "mime", None)),
+                _is_front_cover_picture(picture),
+            )
 
     tags = getattr(audio, "tags", None)
     if not tags:
@@ -1192,13 +1201,28 @@ def _embedded_cover_candidates(audio: object) -> Iterable[tuple[bytes, str | Non
 
     for value in _tag_values(tags, ("covr", "\xa9covr")):
         if isinstance(value, bytes | bytearray):
-            yield bytes(value), None
+            yield bytes(value), None, False
 
     values = tags.values() if hasattr(tags, "values") else ()
     for value in values:
         image_data = getattr(value, "data", None)
         if isinstance(image_data, bytes):
-            yield image_data, _string_or_none(getattr(value, "mime", None))
+            yield (
+                image_data,
+                _string_or_none(getattr(value, "mime", None)),
+                _is_front_cover_picture(value),
+            )
+
+
+def _is_front_cover_picture(picture: object) -> bool:
+    picture_type = getattr(picture, "type", None)
+    try:
+        return int(picture_type) == 3
+    except (TypeError, ValueError):
+        pass
+
+    normalized = str(picture_type).replace("_", " ").replace("-", " ").lower()
+    return normalized in {"front cover", "cover front"}
 
 
 def _tag_values(tags: object, keys: Iterable[str]) -> Iterable[object]:
