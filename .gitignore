@@ -22,3 +22,9 @@ env/
 .DS_Store
 Thumbs.db
 *.asc
+
+# Local environment files and credentials (OSPS-BR-07.01)
+.env
+.env.*
+!.env.example
+.envrc
