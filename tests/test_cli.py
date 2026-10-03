@@ -110,6 +110,16 @@ def test_parse_args_accepts_install_ffmpeg_without_files() -> None:
 
 
 
+def test_release_workflow_requires_pgp_signing_key() -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+
+    assert "PGP_PRIVATE_KEY secret is required for release signing." in workflow
+    assert "skipping detached PGP signature" not in workflow
+    assert "test -s release-assets/SHA256SUMS.asc" in workflow
+    assert "actions/attest-build-provenance" in workflow
+
+
+
 def test_parse_args_rejects_install_ffmpeg_with_scry(capsys: pytest.CaptureFixture[str]) -> None:
     with pytest.raises(SystemExit):
         parse_args(["--install-ffmpeg", "--scry"])
@@ -401,4 +411,3 @@ def test_parse_args_accepts_color_only_output() -> None:
     assert args.bg_color_explicit
     assert args.bg_image is None
     assert not args.bg_blur
-
