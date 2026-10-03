@@ -1,5 +1,5 @@
 import wave
-from io import StringIO
+from io import BytesIO, StringIO
 from pathlib import Path
 
 import pytest
@@ -7,8 +7,10 @@ from PIL import Image
 
 from tests._support import _TtyInput
 from yaatv.cli import (
+    FFMPEG_DOWNLOAD_MAX_BYTES,
     AudioMetadata,
     YaatvError,
+    _download_url,
     _should_pause_after_run,
     background_color,
     classify_files,
@@ -17,6 +19,23 @@ from yaatv.cli import (
     parse_args,
     run,
 )
+
+
+class _DownloadResponse:
+    def __init__(self, data: bytes, *, content_length: str | None = None) -> None:
+        self._stream = BytesIO(data)
+        self.headers = {}
+        if content_length is not None:
+            self.headers["Content-Length"] = content_length
+
+    def __enter__(self) -> "_DownloadResponse":
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        return None
+
+    def read(self, size: int = -1) -> bytes:
+        return self._stream.read(size)
 
 
 def test_audio_and_image_are_required_for_encoding(
@@ -107,6 +126,44 @@ def test_parse_args_accepts_install_ffmpeg_without_files() -> None:
     assert args.scry is False
     assert args.audio is None
     assert args.image is None
+
+
+
+def test_download_url_rejects_oversized_content_length(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    destination = tmp_path / "ffmpeg.zip"
+
+    def fake_urlopen(*_args: object, **_kwargs: object) -> _DownloadResponse:
+        return _DownloadResponse(b"", content_length=str(FFMPEG_DOWNLOAD_MAX_BYTES + 1))
+
+    monkeypatch.setattr("yaatv.cli.urllib.request.urlopen", fake_urlopen)
+
+    with pytest.raises(OSError, match="download exceeded maximum size"):
+        _download_url("https://example.test/ffmpeg.zip", destination)
+
+    assert not destination.exists()
+
+
+
+def test_download_url_removes_partial_file_after_stream_exceeds_limit(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    destination = tmp_path / "ffmpeg.zip"
+
+    def fake_urlopen(*_args: object, **_kwargs: object) -> _DownloadResponse:
+        return _DownloadResponse(b"abcdef")
+
+    monkeypatch.setattr("yaatv.cli.FFMPEG_DOWNLOAD_MAX_BYTES", 5)
+    monkeypatch.setattr("yaatv.cli.FFMPEG_DOWNLOAD_CHUNK_SIZE", 3)
+    monkeypatch.setattr("yaatv.cli.urllib.request.urlopen", fake_urlopen)
+
+    with pytest.raises(OSError, match="download exceeded maximum size"):
+        _download_url("https://example.test/ffmpeg.zip", destination)
+
+    assert not destination.exists()
 
 
 
@@ -401,4 +458,3 @@ def test_parse_args_accepts_color_only_output() -> None:
     assert args.bg_color_explicit
     assert args.bg_image is None
     assert not args.bg_blur
-

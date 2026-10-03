@@ -108,6 +108,8 @@ WINDOWS_RESERVED_FILENAMES = {
 MAX_FILENAME_LENGTH = 200
 FFMPEG_DOWNLOAD_PAGE = "https://ffmpeg.org/download.html"
 FFMPEG_DOWNLOAD_TIMEOUT_SECONDS = 60
+FFMPEG_DOWNLOAD_MAX_BYTES = 512 * 1024 * 1024
+FFMPEG_DOWNLOAD_CHUNK_SIZE = 1024 * 1024
 FFMPEG_ERROR_TAIL_LINES = 20
 FFMPEG_PROGRESS_KEYS = {
     "bitrate",
@@ -1418,8 +1420,27 @@ def _download_url(url: str, destination: Path) -> None:
             with urllib.request.urlopen(  # nosec B310
                 request, timeout=FFMPEG_DOWNLOAD_TIMEOUT_SECONDS
             ) as response:
+                content_length = response.headers.get("Content-Length")
+                if content_length is not None:
+                    try:
+                        if int(content_length) > FFMPEG_DOWNLOAD_MAX_BYTES:
+                            raise OSError(
+                                "download exceeded maximum size "
+                                f"({format_file_size(FFMPEG_DOWNLOAD_MAX_BYTES)})"
+                            )
+                    except ValueError:
+                        pass
+
+                downloaded = 0
                 with destination.open("wb") as output:
-                    shutil.copyfileobj(response, output)
+                    while chunk := response.read(FFMPEG_DOWNLOAD_CHUNK_SIZE):
+                        downloaded += len(chunk)
+                        if downloaded > FFMPEG_DOWNLOAD_MAX_BYTES:
+                            raise OSError(
+                                "download exceeded maximum size "
+                                f"({format_file_size(FFMPEG_DOWNLOAD_MAX_BYTES)})"
+                            )
+                        output.write(chunk)
             return
         except OSError as exc:
             destination.unlink(missing_ok=True)
